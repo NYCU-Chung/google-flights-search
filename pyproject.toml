@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "google-flights-search"
+version = "0.1.0"
+description = "Zero-browser Google Flights SSR client that correctly handles small/regional airports by fixing protobuf URL encoding."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["google-flights", "flights", "travel", "scraping", "aviation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dependencies = [
+    "primp>=1.1.0",
+    "selectolax>=0.3.0",
+    "rjsonc>=0.1.0",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0.0"]
+
+[project.scripts]
+gf-search-mcp = "gf_search.mcp:main"
+
+[project.urls]
+Homepage = "https://github.com/NYCU-Chung/google-flights-search"
+Issues = "https://github.com/NYCU-Chung/google-flights-search/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gf_search"]
