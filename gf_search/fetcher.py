@@ -52,8 +52,12 @@ def fetch(
     params = {"tfs": tfs, "tfu": "EgIIACIA", "hl": "zh-TW"}
     headers = {"Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"}
 
-    # Google SSR is non-deterministic: data[3] may be null on first hit but
-    # populated on retry (edge cache warm-up). Retry up to 3 times total.
+    # Google SSR is non-deterministic: each response may return a different
+    # subset of flights. Fetch up to 3 times and merge all unique results so
+    # low-frequency airlines (e.g. CX, JX) are not silently dropped.
+    seen: set[tuple] = set()
+    merged: list[dict] = []
+
     for attempt in range(3):
         if attempt > 0:
             _time.sleep(1.5)
@@ -74,11 +78,19 @@ def fetch(
         except Exception:
             continue
 
-        results = parse_js(txt)
-        if results:
-            return results[:max_results]
+        for f in parse_js(txt):
+            # Deduplicate by (airlines, first departure datetime)
+            key = (
+                tuple(f["airlines"]),
+                f["segments"][0].get("departure", "") if f["segments"] else "",
+            )
+            if key not in seen:
+                seen.add(key)
+                merged.append(f)
 
-    return []
+    # Sort by price ascending (empty price string sorts last)
+    merged.sort(key=lambda f: int(f["price"].split()[-1]) if f["price"] else 10**9)
+    return merged[:max_results]
 
 
 def _make_client():
