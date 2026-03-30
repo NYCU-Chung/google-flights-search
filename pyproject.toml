@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "google-flights-search"
-version = "0.1.0"
+version = "0.1.1"
 description = "Zero-browser Google Flights SSR client that correctly handles small/regional airports by fixing protobuf URL encoding."
 readme = "README.md"
 license = { file = "LICENSE" }

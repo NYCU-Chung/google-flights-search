@@ -190,7 +190,7 @@ Google Flights renders flight data server-side into a `<script class="ds:1">` ta
 3. Parses all sections in `data[3]` (Best flights + Other flights), not just the first section, so low-traffic carriers appear
 4. Retries up to 3 times with a 1.5 s delay — Google's SSR is non-deterministic; a cold edge cache may return `null` on the first hit
 
-For one-way queries, a synthetic return date (+7 days) is used internally to force Google into full on-demand mode, then only outbound results are returned.
+One-way queries use `field_19 = 2` (one-way) with `Info.field_16 = INT64_MAX` to force full on-demand calculation. No synthetic return date is needed.
 
 ---
 

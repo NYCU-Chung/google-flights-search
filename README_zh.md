@@ -255,7 +255,7 @@ Google Flights 將航班資料透過 Server-Side Rendering 嵌入 `<script class
 3. 解析 `data[3]` 的**所有段落**（Best flights + Other flights），而非只有第一段，確保低流量航空也能出現
 4. 最多 retry 3 次（間隔 1.5 秒）——Google SSR 具有非確定性，cold edge cache 第一次可能回傳 `null`
 
-單程查詢時，內部會合成一個 +7 天的回程日期，強制 Google 進入完整 on-demand 模式，但只回傳去程結果。
+單程查詢使用 `field_19 = 2`（單程）搭配 `Info.field_16 = INT64_MAX` 強制進入完整 on-demand 模式，不需要假回程日期。
 
 多段查詢（`search_multi_city`）額外流程：
 - batchexecute 先暖機（同時用於 fallback 分票）

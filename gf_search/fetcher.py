@@ -41,16 +41,9 @@ def fetch(
 
     seat_no = _SEAT_MAP.get(seat.lower(), 1)
 
-    # For one-way queries, synthesise a return date so that Google performs on-demand
-    # calculation for small/low-traffic airports (data[3] may be null otherwise).
-    from datetime import datetime as _dt, timedelta as _td
-    synth_return = return_date or (
-        _dt.strptime(departure_date, "%Y-%m-%d") + _td(days=7)
-    ).strftime("%Y-%m-%d")
-
     tfs = build_tfs(
         origin.upper(), destination.upper(),
-        departure_date, synth_return,
+        departure_date, return_date,
         seat=seat_no, adults=adults,
     )
 
