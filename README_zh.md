@@ -267,6 +267,7 @@ Google Flights 將航班資料透過 Server-Side Rendering 嵌入 `<script class
 
 - **非官方 API：** Google 可能隨時更改回應格式。
 - **SSR 非確定性：** 即使使用正確的 protobuf，cold cache 偶爾仍會回傳 `null`，內建 retry 邏輯能處理大多數情況，極冷門路線可能仍有偶發空結果。
+- **Session 依賴型航空（如國泰航空）：** 部分航空公司只在帶有 Google session cookie 的請求中出現於 SSR 回應。`gf-search` 使用無狀態的 Rust HTTP client（`primp`），因此在特定路線上這些航空可能不出現——即使在瀏覽器中可以看到。這是 Google edge cache 的行為差異，與 protobuf 編碼無關。解決方案：搭配 SerpAPI 或瀏覽器 fallback 補充。
 - **票價幣別：** 預設使用 `hl=zh-TW`，幣別依 Google 從 IP 推斷的地區而定。
 - **非訂位 API：** 僅抓取搜尋結果頁，不含艙位庫存或訂位層級資料。
 

@@ -198,6 +198,7 @@ One-way queries use `field_19 = 2` (one-way) with `Info.field_16 = INT64_MAX` to
 
 - **Non-official API:** Google may change the response format at any time.
 - **SSR non-determinism:** Even with the correct protobuf, `data[3]` is occasionally `null` on a cold cache hit. The built-in 3-retry logic handles most cases, but very obscure routes may still return empty on some runs.
+- **Session-dependent carriers (e.g. Cathay Pacific):** Some airlines appear in Google Flights SSR only when a valid Google session cookie is present. Since `gf-search` uses a stateless Rust HTTP client (`primp`), these carriers may be absent from results on certain routes — even when they appear in a browser. This is a Google-side edge-caching behaviour, not a protobuf issue. Workaround: supplement with SerpAPI or a browser-based fallback.
 - **Price currency:** Prices are returned in TWD (or the locale Google infers from your IP). The `hl=zh-TW` parameter is set by default.
 - **No seat map / availability API:** This only fetches the search results page, not booking-level availability.
 
