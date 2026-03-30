@@ -1,5 +1,7 @@
 # Google Flights Search
 
+[繁體中文](README_zh.md) | English
+
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
