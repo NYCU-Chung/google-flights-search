@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "google-flights-search"
-version = "0.1.16"
-description = "Google Flights client (SSR + Playwright fallback). Handles small/regional airports; pluggable supplemental schedules for routes not yet indexed by Google."
+version = "0.1.17"
+description = "Google Flights client (SSR + Playwright fallback). Handles small/regional airports; multi-city with full segment enrichment via batchexecute chaining."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
