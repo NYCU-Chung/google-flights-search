@@ -390,6 +390,48 @@ def search_multi_city(
     except Exception:
         pass
 
+    # ── Step 4b: Enrich GSR results with full segment details ────────────────
+    # GSR only returns flight details for the first leg. We match each GSR
+    # result's first-leg flight_no to a leg0_opts token, then chain
+    # batchexecute for the remaining legs to recover actual flight numbers.
+    # The GSR combined price is kept as-is; segments are filled in best-effort.
+    if gsr_results and leg0_opts and len(segments) > 1:
+        leg0_by_fno: dict[str, dict] = {}
+        for _opt in leg0_opts:
+            if _opt.get("segments"):
+                _fno = _opt["segments"][0].get("flight_no", "")
+                if _fno and _fno not in leg0_by_fno:
+                    leg0_by_fno[_fno] = _opt
+
+        for _gr in gsr_results:
+            if not _gr["segments"]:
+                continue
+            _first_fno = _gr["segments"][0].get("flight_no", "")
+            _matched = leg0_by_fno.get(_first_fno)
+            if not _matched:
+                continue
+
+            # Chain batchexecute for legs 1..N-1 starting from matched token
+            _chain_segs: list[dict] = list(_matched["segments"])
+            _chain_airlines: list[str] = list(_matched["airlines"])
+            _tok = _matched["token"]
+            _ok = True
+            for _li in range(1, len(segments)):
+                _lopts = _do_batch(client, orig_inner, legs_in_req, at_token, _tok, _li)
+                if not _lopts:
+                    _ok = False
+                    break
+                _best = sorted(_lopts, key=lambda x: x["price"])[0]
+                _chain_segs.extend(_best["segments"])
+                _chain_airlines.extend(_best["airlines"])
+                _tok = _best["token"]
+
+            if _ok and len(_chain_segs) >= len(segments):
+                _gr["segments"] = _chain_segs
+                _gr["airlines"] = list(dict.fromkeys(_chain_airlines))
+                _gr["stops"] = max(0, len(_chain_segs) - len(segments))
+                _gr["note"] = "Google Flights 聯票（聯票定價，航班明細由 batchexecute 補全）"
+
     # ── Step 5: batchexecute fallback (independent per-leg pricing) ──────────
     # Always run so callers receive both GSR combined fares and per-leg options.
     batch_results: list[dict] = []
