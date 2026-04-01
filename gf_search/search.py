@@ -60,7 +60,7 @@ def search(
                     "plane": str,
                 }
             ],
-            "source": "gf_search",
+            "source": "gf_search",   # or "jx_static" for routes not yet in Google
         }
     """
     from .fetcher import fetch

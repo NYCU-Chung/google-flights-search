@@ -1,0 +1,6 @@
+claude-agent-sdk
+fast-flights>=3.0rc0
+anyio
+FlightRadarAPI
+requests
+rjsonc

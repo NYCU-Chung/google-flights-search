@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-輕量級 Google Flights 查詢套件，**真正支援小型與地區性機場**——不需要瀏覽器、不需要 Playwright、不需要 Google 帳號。
+輕量級 Google Flights 查詢套件，**真正支援小型與地區性機場**。主流路線使用快速 SSR 路徑；地區性機場（如台中 RMQ、熊本 KMJ）自動切換 Playwright 模式。
 
 ## 為什麼不用 fast-flights？
 
@@ -23,16 +23,47 @@
 
 ## 安裝
 
+### 基本（SSR，主流路線）
+
 ```bash
 pip install google-flights-search
 ```
 
-本地開發安裝：
+### + Playwright 支援（地區性小機場，如 RMQ、KMJ 必裝）
+
+```bash
+pip install "google-flights-search[playwright]"
+playwright install chromium      # 下載瀏覽器二進位（約 130MB），只需一次
+gf-search-setup                  # 一次性 Google 登入 → 儲存 session
+```
+
+`gf-search-setup` 會開啟瀏覽器視窗，登入 Google 帳號後自動偵測並儲存 session 到 `~/.flight_agent/session_cookies.json`。後續所有搜尋自動使用，不需再次設定。
+
+### Windows：自動提取 Chrome session（Chrome 未開啟時免登入）
+
+```bash
+pip install "google-flights-search[playwright,windows]"
+playwright install chromium
+```
+
+Chrome **未執行**時，session 可直接從 Chrome cookie 資料庫自動提取，不需手動 `gf-search-setup`。
+
+### 全功能安裝
+
+```bash
+pip install "google-flights-search[full]"
+playwright install chromium
+gf-search-setup
+```
+
+### 本地開發安裝
 
 ```bash
 git clone https://github.com/NYCU-Chung/google-flights-search
 cd google-flights-search
-pip install -e .
+pip install -e ".[playwright,windows]"
+playwright install chromium
+gf-search-setup
 ```
 
 ## 快速開始
@@ -92,13 +123,14 @@ results = search(
 
 ```python
 {
-    "airlines": ["星宇航空"],              # 航空公司名稱列表
+    "airlines": ["JX"],                   # 各航段實際承運航空 IATA 代碼（可多個）
     "price": "TWD 8900",                  # 票價字串，無資料時為 ""
     "stops": 0,                           # 轉機次數
     "segments": [
         {
             "from": "RMQ",
             "to": "KMJ",
+            "flight_no": "JX317",         # 航班號（如 "JX317"、"CI002"），無資料時為 ""
             "departure": "2026-08-08 15:00",
             "arrival": "2026-08-08 18:15",
             "duration_min": 95,
@@ -248,17 +280,25 @@ pip install "google-flights-search[mcp]"
 
 ## 技術原理
 
-Google Flights 將航班資料透過 Server-Side Rendering 嵌入 `<script class="ds:1">` 標籤。`gf-search` 的流程：
+`gf-search` 使用多階段 pipeline，找到結果就停止：
 
-1. 用正確的 protobuf 格式建立 `tfs` 參數（上表三個關鍵欄位）
-2. 透過 `primp` 發送請求——這是一個 Rust HTTP 客戶端，可模擬 Chrome 的 TLS 指紋，不觸發 bot 偵測
-3. 解析 `data[3]` 的**所有段落**（Best flights + Other flights），而非只有第一段，確保低流量航空也能出現
-4. 最多 retry 3 次（間隔 1.5 秒）——Google SSR 具有非確定性，cold edge cache 第一次可能回傳 `null`
+| 階段 | 方式 | 需求 |
+|------|------|------|
+| 0 | Chrome 認證快取（`~/.gf_search/chrome_cache.json`）| 預先填充的快取檔 |
+| 1–3 | `primp` SSR + `tfu`/`batchexecute` fallback | 無（純 HTTP）|
+| 5 | Playwright：真實 Chrome/Chromium + 網路攔截 | `playwright` + `gf-search-setup` |
+| 4 | 補充班表（`schedules.json`）| 無 |
 
-單程查詢使用 `field_19 = 2`（單程）搭配 `Info.field_16 = INT64_MAX` 強制進入完整 on-demand 模式，不需要假回程日期。
+**階段 1–3（快速路徑）：** Google Flights 透過 SSR 將航班資料嵌入 `<script class="ds:1">` 標籤。`gf-search`：
+
+1. 建立正確的 protobuf `tfs` 參數（三個關鍵欄位是核心修正）
+2. 透過 `primp`（模擬 Chrome TLS 指紋的 Rust HTTP 客戶端）發送請求
+3. 最多 retry 3×；若仍空，改用 `tfu`-based 回程抓取與 `batchexecute` chain
+
+**階段 5（地區性機場）：** 對 SSR 快取為空的路線（如 RMQ→KMJ），透過 Playwright 啟動真實 Chrome/Chromium，攔截 `GetShoppingResults` 網路回應直接解析——無航空公司特判，Google 索引的所有路線皆適用。`gf-search-setup` 的 Google session 確保完整結果。
 
 多段查詢（`search_multi_city`）額外流程：
-- batchexecute 先暖機（同時用於 fallback 分票）
+- batchexecute 先暖機（同時作為 fallback 分票）
 - GetShoppingResults 取得完整聯票定價（含環程票優惠）
 
 ---
@@ -266,8 +306,9 @@ Google Flights 將航班資料透過 Server-Side Rendering 嵌入 `<script class
 ## 限制
 
 - **非官方 API：** Google 可能隨時更改回應格式。
-- **SSR 非確定性：** 即使使用正確的 protobuf，cold cache 偶爾仍會回傳 `null`，內建 retry 邏輯能處理大多數情況，極冷門路線可能仍有偶發空結果。
-- **Session 依賴型航空（如國泰航空）：** 部分航空公司只在帶有 Google session cookie 的請求中出現於 SSR 回應。`gf-search` 使用無狀態的 Rust HTTP client（`primp`），因此在特定路線上這些航空可能不出現——即使在瀏覽器中可以看到。這是 Google edge cache 的行為差異，與 protobuf 編碼無關。解決方案：搭配 SerpAPI 或瀏覽器 fallback 補充。
+- **SSR 非確定性：** 即使使用正確的 protobuf，cold cache 偶爾仍會回傳 `null`，內建 retry 邏輯能處理大多數情況。
+- **地區性機場需要 Playwright：** SSR 快取為空的路線（小機場）需安裝 `pip install "google-flights-search[playwright]"` + `playwright install chromium` + `gf-search-setup`。
+- **Google session：** 階段 5 在無 session 時仍可運作，但回傳結果較少。執行 `gf-search-setup` 一次可獲得完整覆蓋。
 - **票價幣別：** 預設使用 `hl=zh-TW`，幣別依 Google 從 IP 推斷的地區而定。
 - **非訂位 API：** 僅抓取搜尋結果頁，不含艙位庫存或訂位層級資料。
 

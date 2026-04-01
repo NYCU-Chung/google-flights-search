@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A lightweight Google Flights SSR client that **actually works for small and regional airports** — no browser, no Playwright, no Google account needed.
+A lightweight Google Flights client that **actually works for small and regional airports**. Uses a fast SSR path for popular routes; falls back to a Playwright-based stage for regional airports (e.g. Taichung RMQ, Kumamoto KMJ).
 
 ## Why gf-search instead of fast-flights?
 
@@ -23,16 +23,47 @@ Existing libraries like `fast-flights` silently return empty results for low-tra
 
 ## Installation
 
+### Basic (SSR only — works for most popular routes)
+
 ```bash
 pip install google-flights-search
 ```
 
-Or for local/editable development:
+### + Playwright fallback (required for small/regional airports like RMQ, KMJ)
+
+```bash
+pip install "google-flights-search[playwright]"
+playwright install chromium      # download browser binary (~130 MB), one-time
+gf-search-setup                  # one-time Google sign-in → saves session
+```
+
+`gf-search-setup` opens a browser window. Sign into your Google account; the session is auto-detected and saved to `~/.flight_agent/session_cookies.json`. All subsequent searches use it automatically — no further setup needed.
+
+### Windows: automatic Chrome session extraction
+
+When Chrome is **not running**, the session can be extracted directly from Chrome's cookie store (no manual sign-in needed):
+
+```bash
+pip install "google-flights-search[playwright,windows]"
+playwright install chromium
+```
+
+### All features
+
+```bash
+pip install "google-flights-search[full]"
+playwright install chromium
+gf-search-setup
+```
+
+### Local / editable development
 
 ```bash
 git clone https://github.com/NYCU-Chung/google-flights-search
-cd gf-search
-pip install -e .
+cd google-flights-search
+pip install -e ".[playwright,windows]"
+playwright install chromium
+gf-search-setup
 ```
 
 ## Quick Start
@@ -76,13 +107,14 @@ results = search(
 
 ```python
 {
-    "airlines": ["Starlux Airlines"],        # list of airline name strings
+    "airlines": ["JX"],                      # IATA carrier code(s) — one per operating carrier
     "price": "TWD 8900",                     # price string, or "" if unavailable
     "stops": 0,                              # number of layovers
     "segments": [
         {
             "from": "RMQ",
             "to": "KMJ",
+            "flight_no": "JX317",            # carrier + flight number (e.g. "JX317", "CI002")
             "departure": "2026-08-08 15:00",
             "arrival": "2026-08-08 18:15",
             "duration_min": 95,
@@ -183,24 +215,33 @@ pip install "google-flights-search[mcp]"
 
 ## How It Works
 
-Google Flights renders flight data server-side into a `<script class="ds:1">` tag. `gf-search`:
+`gf-search` uses a multi-stage pipeline, stopping as soon as results are found:
 
-1. Builds a correctly-encoded protobuf `tfs` parameter (the three fields above are the key)
-2. Fetches the page via `primp` — a Rust HTTP client that impersonates Chrome's TLS fingerprint, so no bot detection triggers
-3. Parses all sections in `data[3]` (Best flights + Other flights), not just the first section, so low-traffic carriers appear
-4. Retries up to 3 times with a 1.5 s delay — Google's SSR is non-deterministic; a cold edge cache may return `null` on the first hit
+| Stage | Method | Requires |
+|-------|--------|----------|
+| 0 | Chrome-authenticated cache (`~/.gf_search/chrome_cache.json`) | Pre-populated cache file |
+| 1–3 | `primp` SSR + `tfu`/`batchexecute` fallbacks | Nothing (pure HTTP) |
+| 5 | Playwright: real Chrome/Chromium, network interception | `playwright` + `gf-search-setup` |
+| 4 | Supplemental schedules (`schedules.json`) | Nothing |
 
-One-way queries use `field_19 = 2` (one-way) with `Info.field_16 = INT64_MAX` to force full on-demand calculation. No synthetic return date is needed.
+**Stages 1–3 (fast path):** Google Flights renders flight data server-side into a `<script class="ds:1">` tag. `gf-search`:
+
+1. Builds a correctly-encoded protobuf `tfs` parameter — three fields missing from other libraries are the key fix
+2. Fetches via `primp` (Rust HTTP client that impersonates Chrome's TLS fingerprint)
+3. Retries up to 3×; if still empty, tries a `tfu`-based return-leg fetch and a `batchexecute` chain
+
+**Stage 5 (regional airports):** For routes where Google's SSR cache is empty (e.g. RMQ→KMJ), a real Chrome/Chromium session is launched via Playwright. Network responses (`GetShoppingResults`) are intercepted and parsed directly — no airline-specific code, works for any route Google has indexed. The Google session from `gf-search-setup` ensures full results.
 
 ---
 
 ## Limitations
 
 - **Non-official API:** Google may change the response format at any time.
-- **SSR non-determinism:** Even with the correct protobuf, `data[3]` is occasionally `null` on a cold cache hit. The built-in 3-retry logic handles most cases, but very obscure routes may still return empty on some runs.
-- **Session-dependent carriers (e.g. Cathay Pacific):** Some airlines appear in Google Flights SSR only when a valid Google session cookie is present. Since `gf-search` uses a stateless Rust HTTP client (`primp`), these carriers may be absent from results on certain routes — even when they appear in a browser. This is a Google-side edge-caching behaviour, not a protobuf issue. Workaround: supplement with SerpAPI or a browser-based fallback.
-- **Price currency:** Prices are returned in TWD (or the locale Google infers from your IP). The `hl=zh-TW` parameter is set by default.
-- **No seat map / availability API:** This only fetches the search results page, not booking-level availability.
+- **SSR non-determinism:** Even with the correct protobuf, flight data sections are occasionally `null` on a cold cache hit. The built-in 3-retry logic handles most cases.
+- **Regional airports need Playwright:** Routes where Google's SSR cache is empty (small airports) require `pip install "google-flights-search[playwright]"` + `playwright install chromium` + `gf-search-setup`.
+- **Google session:** Stage 5 works without a session but returns fewer results. Run `gf-search-setup` once for full coverage.
+- **Price currency:** Prices are returned in TWD by default (`hl=zh-TW`).
+- **No seat map / availability API:** Search results only; no booking-level availability.
 
 ---
 

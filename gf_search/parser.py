@@ -6,43 +6,27 @@ No dependency on fast-flights model classes.
 
 from __future__ import annotations
 
-
-def _fmt_time(time_list) -> str:
-    if not time_list:
-        return "00:00"
-    try:
-        h = int(time_list[0]) if time_list[0] is not None else 0
-        m = int(time_list[1]) if len(time_list) > 1 and time_list[1] is not None else 0
-        return f"{h:02d}:{m:02d}"
-    except (TypeError, ValueError, IndexError):
-        return "00:00"
-
-
-def _fmt_date(date_list) -> str:
-    if not date_list or len(date_list) < 3:
-        return ""
-    try:
-        return f"{int(date_list[0])}-{int(date_list[1]):02d}-{int(date_list[2]):02d}"
-    except (TypeError, ValueError):
-        return ""
+from ._utils import _fmt_date, _fmt_time
 
 
 def parse_js(js: str) -> list[dict]:
     """
     Parse the Google Flights `script.ds:1` JS snippet.
 
-    Iterates over ALL sections in data[3] (Best flights + Other flights),
-    not just data[3][0], so low-traffic airlines (e.g. JX) are included.
+    Iterates over data[2] (Best flights, e.g. Cathay Pacific) AND data[3]
+    (Other flights), so all carriers including CX and low-traffic airlines
+    like JX are included. Deduplicates entries that appear in both sections.
 
     Returns a list of flight dicts:
     {
-        "airlines": list[str],
+        "airlines": list[str],     # IATA carrier code(s), e.g. ["JX"] or ["LJ", "KE"]
         "price": "TWD 12345" or "",
         "stops": int,
         "segments": [
             {
                 "from": "RMQ",
                 "to": "KMJ",
+                "flight_no": "JX317",   # carrier+number from sf[22]; "" if unavailable
                 "departure": "2026-08-08 15:00",
                 "arrival": "2026-08-08 18:15",
                 "duration_min": 95,
@@ -60,26 +44,52 @@ def parse_js(js: str) -> list[dict]:
     except Exception:
         return []
 
-    # data[3] may be None for small airports / special routes (Google uses lazy loading)
-    if not isinstance(data[3], list):
+    # Collect sections from data[2] (Best flights) and data[3] (Other flights).
+    # data[2] contains personalized "Best flights" (e.g. Cathay Pacific on TPE-NRT)
+    # that are absent from data[3]. Both must be parsed to get full coverage.
+    all_sections: list = []
+    for idx in (2, 3):
+        if idx < len(data) and isinstance(data[idx], list):
+            all_sections.extend(data[idx])
+
+    if not all_sections:
         return []
 
     results: list[dict] = []
+    seen_keys: set = set()
 
-    for section in data[3]:           # iterate ALL sections, not just [0]
+    for section in all_sections:
         if not isinstance(section, list):
             continue
         for k in section:
             try:
                 flight    = k[0]
                 price_raw = k[1][0][1]
-                airlines  = flight[1] if isinstance(flight[1], list) else [flight[1]]
+                try:
+                    seg_carriers = [
+                        sf[22][0]
+                        for sf in flight[2]
+                        if isinstance(sf, list) and len(sf) > 22
+                        and isinstance(sf[22], list) and sf[22] and sf[22][0]
+                    ]
+                    airlines = list(dict.fromkeys(seg_carriers)) if seg_carriers else [flight[0]]
+                except (IndexError, TypeError):
+                    airlines = [flight[0]] if flight[0] else []
 
                 segments: list[dict] = []
                 for sf in flight[2]:
+                    if not isinstance(sf, list):
+                        continue
+                    seg_info  = sf[22] if len(sf) > 22 and isinstance(sf[22], list) else []
+                    flight_no = (
+                        f"{seg_info[0]}{seg_info[1]}"
+                        if len(seg_info) >= 2 and seg_info[0] and seg_info[1]
+                        else ""
+                    )
                     segments.append({
                         "from":         sf[3]  if len(sf) > 3  else "",
                         "to":           sf[6]  if len(sf) > 6  else "",
+                        "flight_no":    flight_no,
                         "departure":    f"{_fmt_date(sf[20] if len(sf) > 20 else None)} "
                                         f"{_fmt_time(sf[8]  if len(sf) > 8  else None)}".strip(),
                         "arrival":      f"{_fmt_date(sf[21] if len(sf) > 21 else None)} "
@@ -88,13 +98,27 @@ def parse_js(js: str) -> list[dict]:
                         "plane":        sf[17] if len(sf) > 17 else "",
                     })
 
-                results.append({
+                dedup_key = (
+                    tuple(airlines),
+                    segments[0].get("departure", "") if segments else "",
+                )
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
+
+                entry: dict = {
                     "airlines": airlines,
-                    "price":    f"TWD {price_raw}" if price_raw else "",
+                    "price":    f"TWD {price_raw}" if price_raw is not None else "",
                     "stops":    max(0, len(segments) - 1),
                     "segments": segments,
                     "source":   "gf_search",
-                })
+                }
+                # Include booking token for Stage-3 tfu construction; stripped before returning.
+                try:
+                    entry["_token"] = k[1][1]
+                except (IndexError, TypeError):
+                    pass
+                results.append(entry)
             except (IndexError, TypeError, KeyError):
                 continue
 

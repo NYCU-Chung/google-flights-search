@@ -14,9 +14,12 @@ Flow:
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import re
+
+from ._utils import _fmt_date, _fmt_time, _make_client as _make_client_base
 
 _GF_SEARCH_URL = "https://www.google.com/travel/flights/search"
 _BATCHEXEC_URL = "https://www.google.com/_/FlightsFrontendUi/data/batchexecute"
@@ -24,7 +27,10 @@ _GET_SHOPPING_URL = (
     "https://www.google.com/_/FlightsFrontendUi/data/"
     "travel.frontend.flights.FlightsFrontendService/GetShoppingResults"
 )
-_BATCHEXEC_HDR = {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"}
+_BATCHEXEC_HDR = {
+    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+}
 
 _SEAT_MAP: dict[str, int] = {
     "economy": 1,
@@ -35,62 +41,8 @@ _SEAT_MAP: dict[str, int] = {
 }
 
 
-# ── primp client ──────────────────────────────────────────────────────────────────
-
 def _make_client():
-    """Create a primp Client with Chrome impersonation, falling back to random."""
-    from primp import Client
-    try:
-        return Client(
-            impersonate="chrome_133",
-            impersonate_os="macos",
-            referer=True,
-            cookie_store=True,
-            timeout=120,
-        )
-    except Exception:
-        return Client(
-            impersonate="random",
-            referer=True,
-            cookie_store=True,
-            timeout=120,
-        )
-
-
-# ── segment parsing helpers ───────────────────────────────────────────────────────
-
-def _fmt_date(x) -> str:
-    if not x or len(x) < 3:
-        return ""
-    try:
-        return f"{int(x[0])}-{int(x[1]):02d}-{int(x[2]):02d}"
-    except (TypeError, ValueError):
-        return ""
-
-
-def _fmt_time(x) -> str:
-    if not x:
-        return "00:00"
-    try:
-        h = int(x[0]) if x[0] is not None else 0
-        m = int(x[1]) if len(x) > 1 and x[1] is not None else 0
-        return f"{h:02d}:{m:02d}"
-    except (TypeError, ValueError):
-        return "00:00"
-
-
-def _decode_unicode_escapes(name: str) -> str:
-    """Fix \\uXXXX Unicode escapes not decoded by rjsonc (e.g. \\u661f = 星)."""
-    if isinstance(name, str) and "\\" in name:
-        try:
-            return re.sub(
-                r'\\u([0-9a-fA-F]{4})',
-                lambda m: chr(int(m.group(1), 16)),
-                name,
-            )
-        except Exception:
-            pass
-    return name
+    return _make_client_base(timeout=120)
 
 
 def _parse_flight_section(section: list) -> list[dict]:
@@ -116,20 +68,21 @@ def _parse_flight_section(section: list) -> list[dict]:
             except (IndexError, TypeError):
                 pass
 
-            raw_names = flight[1] if isinstance(flight[1], list) else [flight[1]]
-            airlines = [
-                _decode_unicode_escapes(n) if isinstance(n, str) else n
-                for n in raw_names
-            ]
-
             raw_segs = flight[2]
             segs = []
             for s in raw_segs:
                 if not isinstance(s, list):
                     continue
+                seg_info = s[22] if len(s) > 22 and isinstance(s[22], list) else []
+                flight_no = (
+                    f"{seg_info[0]}{seg_info[1]}"
+                    if len(seg_info) >= 2 and seg_info[0] and seg_info[1]
+                    else ""
+                )
                 segs.append({
                     "from":         s[3]  if len(s) > 3  else "",
                     "to":           s[6]  if len(s) > 6  else "",
+                    "flight_no":    flight_no,
                     "departure":    (
                         f"{_fmt_date(s[20] if len(s) > 20 else None)} "
                         f"{_fmt_time(s[8]  if len(s) > 8  else None)}"
@@ -141,6 +94,18 @@ def _parse_flight_section(section: list) -> list[dict]:
                     "duration_min": s[11] if len(s) > 11 else 0,
                     "plane":        s[17] if len(s) > 17 else "",
                 })
+
+            # Use IATA carrier codes from segment data (consistent with parser.py)
+            try:
+                seg_carriers = [
+                    s[22][0]
+                    for s in raw_segs
+                    if isinstance(s, list) and len(s) > 22
+                    and isinstance(s[22], list) and s[22] and s[22][0]
+                ]
+                airlines = list(dict.fromkeys(seg_carriers)) if seg_carriers else [flight[0]]
+            except (IndexError, TypeError):
+                airlines = [flight[0]] if flight[0] else []
 
             opts.append({
                 "airlines":      airlines,
@@ -336,12 +301,19 @@ def search_multi_city(
 
     inner_raw = (
         af_m.group(1)
+        .replace("undefined", "None")
         .replace("null", "None")
         .replace("true", "True")
         .replace("false", "False")
     )
     try:
-        orig_inner = eval(inner_raw)[1]  # noqa: S307 — Google's embedded JS structure
+        orig_inner = ast.literal_eval(inner_raw)[1]
+    except (ValueError, SyntaxError):
+        # ast.literal_eval fails on rare non-literal JS constructs; eval as fallback.
+        try:
+            orig_inner = eval(inner_raw)[1]  # noqa: S307 — Google's embedded JS structure
+        except Exception:
+            return []
     except Exception:
         return []
 

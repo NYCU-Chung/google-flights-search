@@ -1,0 +1,55 @@
+{
+  "_comment": "Supplemental flight schedules for routes not yet indexed by Google Flights SSR.",
+  "_schema": {
+    "routes[].origin": "IATA departure airport code",
+    "routes[].destination": "IATA arrival airport code",
+    "routes[].airlines": "list of IATA carrier codes",
+    "routes[].flight_no": "carrier + number (e.g. JX316)",
+    "routes[].dep_local": "local departure time HH:MM",
+    "routes[].arr_local": "local arrival time HH:MM",
+    "routes[].arr_day_offset": "days to add to departure date for arrival date (default 0)",
+    "routes[].duration_min": "flight duration in minutes",
+    "routes[].aircraft": "aircraft type string",
+    "routes[].periods[].from": "YYYY-MM-DD start date (inclusive)",
+    "routes[].periods[].to": "YYYY-MM-DD end date (inclusive)",
+    "routes[].periods[].weekdays": "list of integers 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri 5=Sat 6=Sun"
+  },
+  "routes": [
+    {
+      "origin": "RMQ",
+      "destination": "KMJ",
+      "airlines": ["JX"],
+      "flight_no": "JX316",
+      "dep_local": "15:00",
+      "arr_local": "18:15",
+      "arr_day_offset": 0,
+      "duration_min": 135,
+      "aircraft": "Airbus A321neo",
+      "periods": [
+        {"from": "2026-03-31", "to": "2026-05-01", "weekdays": [1, 4, 6]},
+        {"from": "2026-05-02", "to": "2026-05-30", "weekdays": [1, 2, 4, 5, 6]},
+        {"from": "2026-05-31", "to": "2026-07-10", "weekdays": [1, 4, 6]},
+        {"from": "2026-07-11", "to": "2026-08-19", "weekdays": [0, 1, 2, 4, 5, 6]},
+        {"from": "2026-08-20", "to": "2026-10-24", "weekdays": [1, 4, 6]}
+      ]
+    },
+    {
+      "origin": "KMJ",
+      "destination": "RMQ",
+      "airlines": ["JX"],
+      "flight_no": "JX317",
+      "dep_local": "19:15",
+      "arr_local": "20:45",
+      "arr_day_offset": 0,
+      "duration_min": 150,
+      "aircraft": "Airbus A321neo",
+      "periods": [
+        {"from": "2026-03-31", "to": "2026-05-01", "weekdays": [1, 4, 6]},
+        {"from": "2026-05-02", "to": "2026-05-30", "weekdays": [1, 2, 4, 5, 6]},
+        {"from": "2026-05-31", "to": "2026-07-10", "weekdays": [1, 4, 6]},
+        {"from": "2026-07-11", "to": "2026-08-19", "weekdays": [0, 1, 2, 4, 5, 6]},
+        {"from": "2026-08-20", "to": "2026-10-24", "weekdays": [1, 4, 6]}
+      ]
+    }
+  ]
+}

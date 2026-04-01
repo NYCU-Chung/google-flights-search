@@ -1,8 +1,8 @@
 """
 gf_search — lightweight Google Flights SSR client.
 
-Zero Google session, zero Playwright.
 Dependencies: primp, selectolax, rjsonc.
+Optional (for Stage 5 Playwright fallback): playwright
 
 Quick start:
     from gf_search import search
@@ -19,10 +19,21 @@ Multi-city:
         {"from": "NRT", "to": "LHR", "date": "2026-05-03"},
         {"from": "LHR", "to": "TPE", "date": "2026-05-10"},
     ])
+
+One-time Google session setup (for regional routes, run once):
+    import gf_search
+    gf_search.setup()
+    # Opens a browser window — sign into Google, then press Enter.
+    # After this, all searches return full results automatically.
 """
 
 from .search import search
 from .multi_city import search_multi_city
 from .builder import build_tfs, build_tfs_multi_city, CITY_ENTITIES
+from .setup import setup
 
-__all__ = ["search", "search_multi_city", "build_tfs", "build_tfs_multi_city", "CITY_ENTITIES"]
+__all__ = [
+    "search", "search_multi_city",
+    "build_tfs", "build_tfs_multi_city", "CITY_ENTITIES",
+    "setup",
+]

@@ -134,20 +134,14 @@
 
 ---
 
-## 已知資料缺口（必須補查）
+## 資料覆蓋說明
 
-`search_flights` 工具現在使用 `gf_search`（非 fast-flights），**已修正 JX 星宇航空**遺漏問題（protobuf 欄位修正 + 3 次 retry 合併）。
+`search_flights` 工具使用 `gf_search` v0.1.4，已修正以下問題：
+- **JX 星宇航空**：protobuf 欄位修正 + 3 次 retry 合併
+- **CX 國泰航空**：parser 現在同時解析 `data[2]`（Best Flights）與 `data[3]`（Other Flights），CX 已原生包含在結果中
 
-### 國泰航空（CX）
-
-CX 在 Google SSR 無 session 環境下可能不出現（edge cache 差異）。`search_flights` 會自動透過 SerpAPI 補充回傳，**只要 SERPAPI_KEY 有設定就會自動包含 CX**，無需手動補查。
-
-若結果中沒有 CX 且懷疑 CX 是低價選項（尤其 TPE→HKG、TPE→NRT 商務艙），補查：
+若結果中仍沒有 CX 或 JX（罕見），補查：
 - WebSearch「國泰航空 {出發} {目的} {日期} 商務艙 票價」
-
-### 星宇航空（JX）
-
-台灣出發查詢若結果中沒有 JX，補查：
 - WebSearch「星宇 {出發} {目的} {日期}」
 
 ---
