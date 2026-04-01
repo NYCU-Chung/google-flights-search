@@ -7,7 +7,7 @@ contain the required fields at the binary level.
 
 import base64
 import pytest
-from gf_search.builder import build_tfs, build_tfs_selected, build_tfs_multi_city, CITY_ENTITIES
+from gf_search.builder import build_tfs, build_tfs_selected, build_tfs_multi_city, build_tfs_multi_city_partial, CITY_ENTITIES
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -268,3 +268,70 @@ class TestBuildTfsMultiCity:
         fields = parse_varints(raw)
         f16 = find_field(fields, 16)
         assert f16 is not None
+
+
+# ── build_tfs_multi_city_partial ──────────────────────────────────────────────
+
+class TestBuildTfsMultiCityPartial:
+
+    def test_returns_string(self):
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        assert isinstance(build_tfs_multi_city_partial(segs, {}), str)
+
+    def test_no_selection_matches_plain_multi_city(self):
+        """With empty selections, partial == plain multi-city."""
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        assert build_tfs_multi_city_partial(segs, {}) == build_tfs_multi_city(segs)
+
+    def test_selected_leg_has_field4(self):
+        """A selected leg's field3 must contain field4 (selection sub-message)."""
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        raw = decode_tfs(build_tfs_multi_city_partial(segs, {0: "CI107"}))
+        fields = parse_varints(raw)
+        f3_list = find_all_fields(fields, 3, wire_type=2)
+        assert len(f3_list) == 2
+        # Leg 0 field3 must contain field4 (carrier selection)
+        leg0_fields = parse_varints(f3_list[0])
+        f4 = find_field(leg0_fields, 4, wire_type=2)
+        assert f4 is not None, "leg0 should have field4 (flight selection)"
+        # Leg 1 field3 must NOT contain field4 (not yet selected)
+        leg1_fields = parse_varints(f3_list[1])
+        f4_leg1 = find_field(leg1_fields, 4, wire_type=2)
+        assert f4_leg1 is None, "leg1 should NOT have field4"
+
+    def test_carrier_encoded_in_selected_leg(self):
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        raw = decode_tfs(build_tfs_multi_city_partial(segs, {0: "CI107"}))
+        assert b"CI" in raw
+        assert b"107" in raw
+
+    def test_multi_city_trip_type_preserved(self):
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        raw = decode_tfs(build_tfs_multi_city_partial(segs, {0: "CI107"}))
+        fields = parse_varints(raw)
+        f19 = find_field(fields, 19, wire_type=0)
+        assert varint_value(f19) == 3   # MULTI_CITY
+
+    def test_partial_differs_from_plain(self):
+        segs = [
+            {"from": "NRT", "to": "TPE", "date": "2026-08-08"},
+            {"from": "TPE", "to": "HKG", "date": "2026-08-12"},
+        ]
+        plain = build_tfs_multi_city(segs)
+        partial = build_tfs_multi_city_partial(segs, {0: "CI107"})
+        assert plain != partial

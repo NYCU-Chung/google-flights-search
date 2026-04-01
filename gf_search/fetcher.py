@@ -364,9 +364,7 @@ def fetch(
                     )
                     orig_inner = eval(inner_raw)[1]  # noqa: S307
                     legs_in_req = orig_inner[13]
-                    at_m = _re.search(
-                        r"[\"']at[\"']\s*:\s*[\"']([^\"']+)[\"']", rev_html
-                    )
+                    at_m = _re.search(r'"SNlM0e":"([^"]+)"', rev_html)
                     at_token = at_m.group(1) if at_m else ""
 
                     # leg 0: dest→origin (outbound of the reversed round-trip)

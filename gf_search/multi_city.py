@@ -132,8 +132,16 @@ def _parse_batch_response(raw: str) -> list[dict]:
     """
     if not raw.startswith(")]}'"):
         return []
+    stripped = raw[4:].lstrip()
+    # GetShoppingResults uses a streaming format with a chunk-length prefix:
+    #   )]}'\\n\\nNUM\\n[[...  — strip the NUM\\n before the JSON array.
+    # batchexecute responses have no such prefix; the regex is a no-op for them.
+    _len_m = re.match(r'^(\d+)\n(.*)', stripped, re.DOTALL)
+    if _len_m:
+        stripped = _len_m.group(2)
+    # Use raw_decode so trailing data / extra streaming frames are tolerated.
     try:
-        outer = json.loads(raw[4:].lstrip())
+        outer, _ = json.JSONDecoder().raw_decode(stripped)
     except (json.JSONDecodeError, ValueError):
         return []
 
@@ -198,15 +206,52 @@ def _do_batch(
 
 def _do_gsr(
     client,
-    orig_inner: list,
+    segments: list[dict],
+    seat: int,
+    adults: int,
     at_token: str,
 ) -> list[dict]:
     """
-    Issue a GetShoppingResults POST to retrieve combined itinerary (circuit fare) results.
+    Issue a GetShoppingResults POST using the simplified JSON format observed in
+    Chrome on 2026-04-01.
 
-    orig_inner must NOT be mutated — pass copy.deepcopy() externally before calling.
+    The browser sends a compact query structure with IATA codes directly — NOT the
+    full orig_inner protobuf.  This format works without a Google session for major
+    airports; small/low-traffic airports still require a valid session cookie.
     """
-    filters = [[], copy.deepcopy(orig_inner), 0, 0, 0, 2]
+    from .builder import CITY_ENTITIES
+
+    def _gsr_airport(iata: str) -> list:
+        """Return [[[entity_id, entity_type]]] for a GSR segment endpoint.
+        City/metro entities use entity_type 2 + numeric ID; plain airports use 0.
+        (Browser sends entity_type 0 for standard airports; 2 for city entities.)
+        """
+        iata = iata.upper()
+        if iata in CITY_ENTITIES:
+            return [[[CITY_ENTITIES[iata], 2]]]
+        return [[[iata, 0]]]
+
+    seg_list = []
+    for seg in segments:
+        seg_list.append([
+            _gsr_airport(seg["from"]),        # origins: [[[entity_id, entity_type]]]
+            _gsr_airport(seg["to"]),          # destinations
+            None, 0, None, None,
+            seg["date"],                      # YYYY-MM-DD
+            None, None, None, None, None, None, None,
+            3,    # max-stops filter (browser always sends 3 = any)
+        ])
+
+    inner = [
+        None, None, 1, None, [],
+        adults,              # [5]: adult count
+        [adults, 0, 0, 0],  # [6]: [adults, children, infants_lap, infants_seat]
+        None, None, None, None, None, None,
+        seg_list,            # [13]: route segments
+        None, None, None,
+        seat,                # [17]: cabin class (1=economy … 4=first)
+    ]
+    filters = [[], inner, 0, 0, 0, 3]   # outer[5]=3 → multi-city trip type
     filters_json = json.dumps(filters, separators=(",", ":"))
     wrapped = json.dumps([None, filters_json], separators=(",", ":"))
     gsr_pd: dict = {"f.req": wrapped}
@@ -322,7 +367,7 @@ def search_multi_city(
         # Google did not return the expected leg structure; bail out
         return []
 
-    at_m = re.search(r"[\"']at[\"']\s*:\s*[\"']([^\"']+)[\"']", html)
+    at_m = re.search(r'"SNlM0e":"([^"]+)"', html)
     at_token = at_m.group(1) if at_m else ""
 
     # ── Step 3: batchexecute leg 0 (warm session; required for GSR) ──────────
@@ -337,7 +382,7 @@ def search_multi_city(
     seen_gsr: set = set()
 
     try:
-        gsr_opts = _do_gsr(client, orig_inner, at_token)
+        gsr_opts = _do_gsr(client, segments, seat_no, adults, at_token)
 
         for opt in sorted(gsr_opts, key=lambda x: x["price"]):
             if len(gsr_results) >= max_results:

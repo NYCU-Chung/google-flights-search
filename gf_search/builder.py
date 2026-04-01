@@ -33,12 +33,74 @@ def _airport_bytes(iata_or_entity: str) -> bytes:
     return _field_varint(1, entity_type) + _field_len(2, entity_id.encode())
 
 
+def _flight_data_bytes_with_selection(date: str, frm: str, to: str, flight_id: str) -> bytes:
+    """Flight data with field 4 (selected flight) embedded — same layout as build_tfs_selected.
+
+    flight_id must be a single carrier+number string (e.g. "CI107").
+    Pipe-separated connecting flights (e.g. "AA123|BA456") are NOT supported;
+    callers must filter for direct/single-segment flights before calling this function.
+    """
+    if "|" in flight_id or len(flight_id) < 3:
+        raise ValueError(
+            f"flight_id must be a single carrier+number (e.g. 'CI107'), got: {flight_id!r}. "
+            "Pipe-separated connecting flights are not supported."
+        )
+    carrier   = flight_id[:2]
+    flight_no = flight_id[2:]
+    sel = (
+        _field_len(1, frm.encode())
+        + _field_len(2, date.encode())
+        + _field_len(3, to.encode())
+        + _field_len(5, carrier.encode())
+        + _field_len(6, flight_no.encode())
+    )
+    return (
+        _field_len(2,  date.encode())
+        + _field_len(4,  sel)
+        + _field_len(13, _airport_bytes(frm))
+        + _field_len(14, _airport_bytes(to))
+    )
+
+
 def _flight_data_bytes(date: str, frm: str, to: str) -> bytes:
     return (
         _field_len(2,  date.encode())           # date
         + _field_len(13, _airport_bytes(frm))   # from_airport
         + _field_len(14, _airport_bytes(to))    # to_airport
     )
+
+
+def build_tfs_multi_city_partial(
+    segments: list[dict],
+    selections: dict[int, str],   # {leg_idx: "CI107", ...} — legs already chosen
+    seat: int = 1,
+    adults: int = 1,
+) -> str:
+    """
+    Build a multi-city tfs with field 4 (flight selection) embedded for chosen legs.
+
+    Used for step-by-step GSR: after selecting legs 0..K-1, build a tfs with
+    field 4 in those legs' FlightData blocks so Google returns leg-K options.
+
+    selections maps leg index → flight-id string (e.g. {0: "CI107", 1: "CI915"}).
+    Unselected legs use plain _flight_data_bytes (no field 4).
+    """
+    info = _field_varint(1, 28) + _field_varint(2, 2)
+    for i, seg in enumerate(segments):
+        frm = seg["from"].upper()
+        to  = seg["to"].upper()
+        if i in selections:
+            fd = _flight_data_bytes_with_selection(seg["date"], frm, to, selections[i])
+        else:
+            fd = _flight_data_bytes(seg["date"], frm, to)
+        info += _field_len(3, fd)
+    for _ in range(adults):
+        info += _field_varint(8, 1)
+    info += _field_varint(9, seat)
+    info += _field_varint(14, 1)
+    info += _field_len(16, _FIELD16_ALL_RESULTS)
+    info += _field_varint(19, 3)   # MULTI_CITY
+    return _b64.urlsafe_b64encode(info).rstrip(b'=').decode('ascii')
 
 
 def build_tfs(
