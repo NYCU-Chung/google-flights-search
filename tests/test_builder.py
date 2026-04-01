@@ -258,8 +258,8 @@ class TestBuildTfsMultiCity:
         f3_all = find_all_fields(fields, 3, wire_type=2)
         assert len(f3_all) == 3
 
-    def test_no_field16(self):
-        """Multi-city must NOT include field 16 (all-results flag)."""
+    def test_has_field16(self):
+        """Multi-city must include field 16 (all-results flag), same as browser-observed tfs."""
         segs = [
             {"from": "TPE", "to": "NRT", "date": "2026-05-01"},
             {"from": "NRT", "to": "LHR", "date": "2026-05-03"},
@@ -267,4 +267,4 @@ class TestBuildTfsMultiCity:
         raw = decode_tfs(build_tfs_multi_city(segs))
         fields = parse_varints(raw)
         f16 = find_field(fields, 16)
-        assert f16 is None
+        assert f16 is not None

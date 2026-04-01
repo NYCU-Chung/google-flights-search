@@ -155,8 +155,7 @@ def build_tfs_multi_city(
     Unlike build_tfs(), this function:
     - Sets field 19 = 3 (MULTI_CITY trip type)
     - Generates one field 3 (FlightData) per segment
-    - Does NOT include field 16 (all-results flag); multi-city uses batchexecute
-      rather than on-demand SSR, so the flag is unnecessary
+    - Includes field 16 (all-results flag), consistent with browser-observed traffic
     """
     info = (
         _field_varint(1, 28)
@@ -171,6 +170,7 @@ def build_tfs_multi_city(
 
     info += _field_varint(9, seat)
     info += _field_varint(14, 1)
+    info += _field_len(16, _FIELD16_ALL_RESULTS)  # on-demand flag (same as SSR searches)
     info += _field_varint(19, 3)   # MULTI_CITY
 
     return _b64.urlsafe_b64encode(info).rstrip(b'=').decode('ascii')
