@@ -373,8 +373,6 @@ def search_multi_city(
     # ── Step 3: batchexecute leg 0 (warm session; required for GSR) ──────────
     # Always run even if we proceed to GSR — GSR needs the session to be
     # initialised via batchexecute first.
-    TOP_K = max(5, max_results)
-
     leg0_opts = _do_batch(client, orig_inner, legs_in_req, at_token, None, 0)
 
     # ── Step 4: GetShoppingResults (primary — combined / circuit itineraries) ─
@@ -482,10 +480,35 @@ def search_multi_city(
     batch_results: list[dict] = []
     seen_batch: set = set()
 
+    # Fixed chain width — independent of max_results to avoid Google rate limiting.
+    # 30 paths × 3 legs = 90 batchexecute calls (vs 150*3=450 with scaled TOP_K).
+    _CHAIN_K = 30
+
     if leg0_opts:
+        # Diversity pruning at leg 0: keep cheapest option per unique first-airline
+        # so FSC carriers (CI, BR, JL) always get a representative path even when
+        # dozens of cheaper LCC (GK, UO) options exist.
+        from collections import defaultdict as _dd
+        _leg0_by_al: dict = _dd(list)
+        for _o in leg0_opts:
+            _al = (_o.get("airlines") or ["?"])[0]
+            _leg0_by_al[_al].append(_o)
+        # One cheapest per airline, then fill up to _CHAIN_K with cheapest overall
+        _leg0_diverse: list[dict] = [
+            sorted(_v, key=lambda x: x["price"])[0]
+            for _v in _leg0_by_al.values()
+        ]
+        _leg0_diverse_ids = {id(_o) for _o in _leg0_diverse}
+        for _o in sorted(leg0_opts, key=lambda x: x["price"]):
+            if len(_leg0_diverse) >= _CHAIN_K:
+                break
+            if id(_o) not in _leg0_diverse_ids:
+                _leg0_diverse.append(_o)
+                _leg0_diverse_ids.add(id(_o))
+
         paths = [
             {"legs": [o], "token": o["token"], "total": o["price"]}
-            for o in sorted(leg0_opts, key=lambda x: x["price"])[:TOP_K]
+            for o in _leg0_diverse[:_CHAIN_K]
         ]
 
         for leg_idx in range(1, len(segments)):
@@ -494,7 +517,22 @@ def search_multi_city(
                 leg_opts = _do_batch(
                     client, orig_inner, legs_in_req, at_token, path["token"], leg_idx
                 )
-                for o in sorted(leg_opts, key=lambda x: x["price"])[:TOP_K]:
+                # Per-airline diversity within each leg so FSC carriers (CI, BR, JL)
+                # are always represented even when cheaper LCC options dominate top-K.
+                _by_leg_al: dict = {}
+                for _o in leg_opts:
+                    _al = (_o.get("airlines") or ["?"])[0]
+                    if _al not in _by_leg_al or _o["price"] < _by_leg_al[_al]["price"]:
+                        _by_leg_al[_al] = _o
+                _leg_diverse: list[dict] = list(_by_leg_al.values())
+                _leg_seen_ids = {id(_o) for _o in _leg_diverse}
+                for _o in sorted(leg_opts, key=lambda x: x["price"]):
+                    if len(_leg_diverse) >= _CHAIN_K:
+                        break
+                    if id(_o) not in _leg_seen_ids:
+                        _leg_diverse.append(_o)
+                        _leg_seen_ids.add(id(_o))
+                for o in _leg_diverse[:_CHAIN_K]:
                     next_paths.append({
                         "legs":  path["legs"] + [o],
                         "token": o["token"],
@@ -503,9 +541,79 @@ def search_multi_city(
             if not next_paths:
                 paths = []
                 break
-            paths = sorted(next_paths, key=lambda x: x["total"])[:TOP_K]
+            # Diversity-aware pruning: keep cheapest path per unique airline combo
+            # (tuple of first airline per leg) so CI+CI+CI+CI survives alongside
+            # GK+UO+UO+GK without being pruned by price dominance.
+            _by_combo: dict = _dd(list)
+            for _p in next_paths:
+                _combo = tuple(
+                    (_l.get("airlines") or ["?"])[0] for _l in _p["legs"]
+                )
+                _by_combo[_combo].append(_p)
+            _diverse = [
+                sorted(_v, key=lambda x: x["total"])[0]
+                for _v in _by_combo.values()
+            ]
+            paths = sorted(_diverse, key=lambda x: x["total"])[:_CHAIN_K]
 
-        for path in sorted(paths, key=lambda x: x["total"])[:max_results]:
+        # ── Step 5b: Targeted FSC chains ──────────────────────────────────
+        # For each full-service airline found at leg 0, build a dedicated chain
+        # that always prefers the same airline at each subsequent leg.
+        # This finds CI+CI+CI+CI, BR+BR+BR+BR etc. with only
+        # (n_fsc_airlines × n_legs) extra batchexecute calls instead of
+        # the exponential fan-out required by price-ranked combo expansion.
+        _budget_set_local = {"UO", "IT", "MM", "GK", "TR", "3K", "VZ", "FD", "SL", "HB"}
+        _fsc_leg0 = [
+            o for o in leg0_opts
+            if (o.get("airlines") or ["?"])[0] not in _budget_set_local
+        ]
+        for _fsc0 in _fsc_leg0:
+            _target_al = (_fsc0.get("airlines") or ["?"])[0]
+            _fsc_legs = [_fsc0]
+            _fsc_tok = _fsc0["token"]
+            _fsc_total = _fsc0["price"]
+            _ok = True
+            for _li in range(1, len(segments)):
+                _lopts = _do_batch(
+                    client, orig_inner, legs_in_req, at_token, _fsc_tok, _li
+                )
+                if not _lopts:
+                    _ok = False
+                    break
+                # Prefer same airline; else cheapest FSC; else cheapest overall
+                _same_al = [
+                    o for o in _lopts
+                    if (o.get("airlines") or ["?"])[0] == _target_al
+                ]
+                if _same_al:
+                    _best_fsc = sorted(_same_al, key=lambda x: x["price"])[0]
+                else:
+                    _fsc_alts = [
+                        o for o in _lopts
+                        if (o.get("airlines") or ["?"])[0] not in _budget_set_local
+                    ]
+                    _best_fsc = sorted(
+                        _fsc_alts or _lopts, key=lambda x: x["price"]
+                    )[0]
+                _fsc_legs.append(_best_fsc)
+                _fsc_tok = _best_fsc["token"]
+                _fsc_total += _best_fsc["price"]
+            if _ok and len(_fsc_legs) == len(segments):
+                paths.append({
+                    "legs":  _fsc_legs,
+                    "token": _fsc_tok,
+                    "total": _fsc_total,
+                })
+
+        # Re-dedup paths by combo after appending FSC chains
+        _paths_by_combo: dict = {}
+        for _p in paths:
+            _c = tuple((_l.get("airlines") or ["?"])[0] for _l in _p["legs"])
+            if _c not in _paths_by_combo or _p["total"] < _paths_by_combo[_c]["total"]:
+                _paths_by_combo[_c] = _p
+        paths = sorted(_paths_by_combo.values(), key=lambda x: x["total"])
+
+        for path in sorted(paths, key=lambda x: x["total"])[:max_results * 3]:
             all_segs2: list[dict] = []
             all_airlines2: list[str] = []
             total_stops = 0
@@ -515,7 +623,12 @@ def search_multi_city(
                 all_airlines2.extend(leg["airlines"])
                 total_stops += leg["stops"]
 
-            route_key2 = tuple(f"{s['from']}->{s['to']}" for s in all_segs2)
+            # Include flight_no in route key so different airline combos with same
+            # total price are not collapsed (e.g. GK+UO vs CI+UO same price edge case)
+            route_key2 = tuple(
+                f"{s['from']}->{s['to']}@{s.get('flight_no','')}"
+                for s in all_segs2
+            )
             fp2 = (path["total"], route_key2)
             if fp2 in seen_batch:
                 continue
