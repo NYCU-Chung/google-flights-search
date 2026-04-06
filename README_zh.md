@@ -116,6 +116,8 @@ results = search(
     adults=1,                    # 成人人數
     travel_class="economy",      # "economy" | "premium-economy" | "business" | "first"
     max_results=5,               # 最多回傳幾筆
+    currency="TWD",              # 票價幣別（如 "TWD"、"USD"、"JPY"）
+    max_stops=None,              # 轉機次數上限：0=直飛、1=最多1轉、None=不限
 )
 ```
 
@@ -142,6 +144,27 @@ results = search(
 ```
 
 retry 後仍無結果時回傳 `[]`。
+
+---
+
+### `session_status()`
+
+檢查已儲存的 Google session 健康狀態（供階段 5 Playwright fallback 使用）。
+
+```python
+from gf_search import session_status
+
+status = session_status()
+print(status)
+# {
+#     "valid": True,           # session 存在且未過期
+#     "exists": True,          # session_cookies.json 是否存在
+#     "age_hours": 72.5,       # 距上次設定的小時數（無檔案時為 -1）
+#     "stale": False,          # 超過 72 小時為 True
+#     "cookie_count": 10,      # session cookie 數量
+#     "message": "Google session 有效（10 cookies，72 小時前更新）。"
+# }
+```
 
 ---
 
@@ -255,10 +278,12 @@ CITY_ENTITIES["OKA"] = "/m/0h7r_"  # 沖繩那霸
 }
 ```
 
-重啟 Claude Desktop 後即可使用，Claude 將擁有兩個工具：
+重啟 Claude Desktop 後即可使用，Claude 將擁有四個工具：
 
-- **`search_flights`** — 單段 / 來回查詢
+- **`search_flights`** — 單段 / 來回查詢（支援 `max_stops` 過濾；結果為空或無票價時附帶提示訊息）
 - **`search_multi_city_flights`** — 多段行程 / open-jaw / 四段票
+- **`search_cheapest_dates`** — 在日期範圍內搜尋並依票價排序（適合彈性日期旅客）
+- **`generate_search_urls`** — 產生 Google Flights URL，可直接在瀏覽器開啟（適用於 API 結果不完整的冷門路線）
 
 若偏好手動安裝：
 
@@ -295,7 +320,7 @@ pip install "google-flights-search[mcp]"
 2. 透過 `primp`（模擬 Chrome TLS 指紋的 Rust HTTP 客戶端）發送請求
 3. 最多 retry 3×；若仍空，改用 `tfu`-based 回程抓取與 `batchexecute` chain
 
-**階段 5（地區性機場）：** 對 SSR 快取為空的路線（如 RMQ→KMJ），透過 Playwright 啟動真實 Chrome/Chromium，攔截 `GetShoppingResults` 網路回應直接解析——無航空公司特判，Google 索引的所有路線皆適用。`gf-search-setup` 的 Google session 確保完整結果。
+**階段 5（地區性機場與來回票）：** 對 SSR 快取為空的路線（如 RMQ→KMJ），或所有 SSR 結果皆無票價時，透過 Playwright 啟動真實 Chrome/Chromium。來回票查詢會先嘗試原生來回票 URL（保留來回票價）；Playwright 失敗時才拆為兩段單程（結果附帶 `direction` 欄位及 `_price_note`）。網路回應（`GetShoppingResults`）直接攔截解析——無航空公司特判，Google 索引的所有路線皆適用。`session_cookies.json` 的 session cookies 會自動注入 Playwright 及 SSR 請求。
 
 多段查詢（`search_multi_city`）額外流程：
 - batchexecute 先暖機（同時作為 fallback 分票）
@@ -308,8 +333,8 @@ pip install "google-flights-search[mcp]"
 - **非官方 API：** Google 可能隨時更改回應格式。
 - **SSR 非確定性：** 即使使用正確的 protobuf，cold cache 偶爾仍會回傳 `null`，內建 retry 邏輯能處理大多數情況。
 - **地區性機場需要 Playwright：** SSR 快取為空的路線（小機場）需安裝 `pip install "google-flights-search[playwright]"` + `playwright install chromium` + `gf-search-setup`。
-- **Google session：** 階段 5 在無 session 時仍可運作，但回傳結果較少。執行 `gf-search-setup` 一次可獲得完整覆蓋。
-- **票價幣別：** 預設使用 `hl=zh-TW`，幣別依 Google 從 IP 推斷的地區而定。
+- **Google session：** 階段 5 在無 session 時仍可運作，但回傳結果較少。執行 `gf-search-setup` 一次可獲得完整覆蓋。Setup 主要影響冷門路線（階段 5）；主流路線透過 SSR 查詢，有無 session 結果相同。
+- **票價幣別：** 可透過 `currency` 參數設定（預設 `"TWD"`）。
 - **非訂位 API：** 僅抓取搜尋結果頁，不含艙位庫存或訂位層級資料。
 
 ---
@@ -320,8 +345,6 @@ pip install "google-flights-search[mcp]"
 
 - **補充 `CITY_ENTITIES`**（任何 Google 以城市 entity 而非 IATA 代碼索引的機場）
 - 擴充 `_SEAT_MAP` 別名
-- 票價幣別處理改善
-- 加入 type stubs / `py.typed` 標記
 
 新增 entity ID 請參考上方說明取得值後，加入 `gf_search/builder.py`。
 

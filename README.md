@@ -100,6 +100,8 @@ results = search(
     adults=1,               # number of adult passengers
     travel_class="economy", # "economy" | "premium-economy" | "business" | "first"
     max_results=5,          # maximum number of results to return
+    currency="TWD",         # price currency code (e.g. "TWD", "USD", "JPY")
+    max_stops=None,         # max layovers: 0=direct only, 1=max 1 stop, None=any
 )
 ```
 
@@ -126,6 +128,27 @@ results = search(
 ```
 
 Returns `[]` if no results are found after retries.
+
+---
+
+### `session_status()`
+
+Check the health of the saved Google session (used by Stage 5 Playwright fallback).
+
+```python
+from gf_search import session_status
+
+status = session_status()
+print(status)
+# {
+#     "valid": True,           # True if session exists and is fresh
+#     "exists": True,          # True if session_cookies.json exists
+#     "age_hours": 72.5,       # hours since last setup (or -1)
+#     "stale": False,          # True if session is older than 72h
+#     "cookie_count": 10,      # number of session cookies
+#     "message": "Google session 有效（10 cookies，72 小時前更新）。"
+# }
+```
 
 ---
 
@@ -190,10 +213,12 @@ To find an entity ID: open Google Flights in Chrome DevTools, trigger a search f
 }
 ```
 
-Restart Claude Desktop. Claude will have access to two tools:
+Restart Claude Desktop. Claude will have access to four tools:
 
-- **`search_flights`** — single origin-destination search
+- **`search_flights`** — single origin-destination search (supports `max_stops` filter; returns helpful hints when results are empty or priceless)
 - **`search_multi_city_flights`** — multi-city / open-jaw / 4-leg itineraries
+- **`search_cheapest_dates`** — search a date range and return results sorted by cheapest price (great for flexible-date travellers)
+- **`generate_search_urls`** — generate a Google Flights URL that can be opened in a browser (useful when API results are incomplete for niche routes)
 
 If you prefer installing manually first:
 
@@ -230,7 +255,7 @@ pip install "google-flights-search[mcp]"
 2. Fetches via `primp` (Rust HTTP client that impersonates Chrome's TLS fingerprint)
 3. Retries up to 3×; if still empty, tries a `tfu`-based return-leg fetch and a `batchexecute` chain
 
-**Stage 5 (regional airports):** For routes where Google's SSR cache is empty (e.g. RMQ→KMJ), a real Chrome/Chromium session is launched via Playwright. Network responses (`GetShoppingResults`) are intercepted and parsed directly — no airline-specific code, works for any route Google has indexed. The Google session from `gf-search-setup` ensures full results.
+**Stage 5 (regional airports & round-trips):** For routes where Google's SSR cache is empty (e.g. RMQ→KMJ), or when all SSR results lack prices, a real Chrome/Chromium session is launched via Playwright. For round-trip queries, Stage 5 first attempts the native round-trip URL to preserve round-trip pricing; if Playwright fails, the search is decomposed into two one-way legs (results include a `direction` field and `_price_note`). Network responses (`GetShoppingResults`) are intercepted and parsed directly — no airline-specific code, works for any route Google has indexed. Session cookies from `session_cookies.json` are automatically injected into both Playwright and SSR requests.
 
 ---
 
@@ -239,8 +264,8 @@ pip install "google-flights-search[mcp]"
 - **Non-official API:** Google may change the response format at any time.
 - **SSR non-determinism:** Even with the correct protobuf, flight data sections are occasionally `null` on a cold cache hit. The built-in 3-retry logic handles most cases.
 - **Regional airports need Playwright:** Routes where Google's SSR cache is empty (small airports) require `pip install "google-flights-search[playwright]"` + `playwright install chromium` + `gf-search-setup`.
-- **Google session:** Stage 5 works without a session but returns fewer results. Run `gf-search-setup` once for full coverage.
-- **Price currency:** Prices are returned in TWD by default (`hl=zh-TW`).
+- **Google session:** Stage 5 works without a session but returns fewer results. Run `gf-search-setup` once for full coverage. Setup mainly affects niche routes (Stage 5); popular routes return the same results with or without a session via SSR.
+- **Price currency:** Configurable via the `currency` parameter (default `"TWD"`).
 - **No seat map / availability API:** Search results only; no booking-level availability.
 
 ---
@@ -251,8 +276,6 @@ PRs are welcome! The most impactful contributions right now:
 
 - **More city entity IDs** in `CITY_ENTITIES` (any airport where Google uses a city-level entity rather than an IATA code directly)
 - Expanded `_SEAT_MAP` aliases
-- Better price currency handling
-- Type stubs / `py.typed` marker
 
 To add a city entity ID, find it via Chrome DevTools as described above, then add it to `gf_search/builder.py`.
 
