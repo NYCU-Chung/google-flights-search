@@ -315,6 +315,7 @@ def fetch(
     # ── Round-trip decomposition fallback ────────────────────────────────────
     # If Stage 5 didn't produce results (Playwright not installed, or failed),
     # decompose into two one-way searches as last resort.
+    # WARNING: one-way prices are typically higher than half of a round-trip fare.
     if not merged and return_date is not None:
         outbound = fetch(
             origin, destination, departure_date, None,
@@ -326,8 +327,10 @@ def fetch(
         )
         for f in outbound:
             f["direction"] = "outbound"
+            f["_price_note"] = "one-way price (round-trip may be cheaper)"
         for f in inbound:
             f["direction"] = "inbound"
+            f["_price_note"] = "one-way price (round-trip may be cheaper)"
         return outbound + inbound
 
     # Small-airport-as-origin fallback.
