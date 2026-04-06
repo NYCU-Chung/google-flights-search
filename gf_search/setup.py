@@ -18,6 +18,7 @@ Or from the command line:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 _FLIGHT_AGENT_DIR = Path.home() / ".flight_agent"
@@ -31,9 +32,65 @@ _SESSION_COOKIE_NAMES = frozenset({
     "__Secure-3PSIDCC", "__Host-GAPS",
 })
 
+# Session cookies older than this are considered stale.
+_SESSION_MAX_AGE_HOURS = 72
+
 
 def _has_google_session(cookies: list[dict]) -> bool:
     return any(c["name"] in _SESSION_COOKIE_NAMES for c in cookies)
+
+
+def session_status() -> dict:
+    """
+    Check the current session health.
+
+    Returns a dict:
+        {
+            "valid": bool,          # True if session exists and is fresh
+            "exists": bool,         # True if session_cookies.json exists
+            "age_hours": float,     # Hours since last setup (or -1)
+            "stale": bool,          # True if session is older than 72h
+            "cookie_count": int,    # Number of session cookies
+            "message": str,         # Human-readable status message
+        }
+    """
+    import os
+
+    result = {
+        "valid": False, "exists": False,
+        "age_hours": -1, "stale": False,
+        "cookie_count": 0, "message": "",
+    }
+
+    if not os.path.isfile(_SESSION_FILE):
+        result["message"] = "未設定 Google session。執行 gf_search.setup() 可提升冷門路線的搜尋品質。"
+        return result
+
+    result["exists"] = True
+    try:
+        mtime = os.path.getmtime(_SESSION_FILE)
+        age_hours = (time.time() - mtime) / 3600
+        result["age_hours"] = round(age_hours, 1)
+
+        cookies = json.loads(Path(_SESSION_FILE).read_text(encoding="utf-8"))
+        session_count = sum(1 for c in cookies if c.get("name") in _SESSION_COOKIE_NAMES)
+        result["cookie_count"] = session_count
+
+        if session_count == 0:
+            result["message"] = "session_cookies.json 存在但不含有效的 Google session cookies。請重新執行 gf_search.setup()。"
+            return result
+
+        if age_hours > _SESSION_MAX_AGE_HOURS:
+            result["stale"] = True
+            result["message"] = f"Google session 已 {age_hours:.0f} 小時未更新（建議每 {_SESSION_MAX_AGE_HOURS} 小時刷新）。執行 gf_search.setup() 更新。"
+            return result
+
+        result["valid"] = True
+        result["message"] = f"Google session 有效（{session_count} cookies，{age_hours:.0f} 小時前更新）。"
+        return result
+    except Exception as e:
+        result["message"] = f"無法讀取 session 狀態：{e}"
+        return result
 
 
 def setup(timeout_seconds: int = 180) -> bool:
@@ -57,15 +114,22 @@ def setup(timeout_seconds: int = 180) -> bool:
         from playwright.async_api import async_playwright
     except ImportError:
         print(
-            "playwright is not installed.  Run:\n"
+            "❌ playwright 未安裝。請執行：\n"
             "  pip install playwright\n"
             "  playwright install chromium\n"
-            "then call gf_search.setup() again."
+            "然後再次執行 gf_search.setup()。"
         )
         return False
 
     _FLIGHT_AGENT_DIR.mkdir(parents=True, exist_ok=True)
     Path(_PW_PROFILE).mkdir(parents=True, exist_ok=True)
+
+    # Check if session is already valid
+    status = session_status()
+    if status["valid"]:
+        print(f"✅ {status['message']}")
+        print("如果搜尋結果不完整，可以強制重新登入：gf_search.setup()")
+        return True
 
     result: dict = {"ok": False}
 
@@ -88,10 +152,10 @@ def setup(timeout_seconds: int = 180) -> bool:
 
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-            # Check if already signed in (session_cookies.json exists and usable)
+            # Check if already signed in via persistent profile
             init_cookies = await ctx.cookies("https://www.google.com")
             if _has_google_session(init_cookies):
-                print("Google session already active — saving cookies.")
+                print("✅ 偵測到已登入的 Google session，正在儲存...")
                 _save_cookies(await ctx.cookies())
                 await ctx.close()
                 result["ok"] = True
@@ -100,13 +164,14 @@ def setup(timeout_seconds: int = 180) -> bool:
             await page.goto("https://accounts.google.com", timeout=30_000)
 
             print()
-            print("=" * 60)
-            print("gf_search one-time setup")
-            print("=" * 60)
-            print("A browser window has opened.")
-            print("Sign into your Google account.")
-            print(f"Will auto-detect sign-in (timeout: {timeout_seconds}s).")
-            print("=" * 60)
+            print("┌──────────────────────────────────────────┐")
+            print("│  gf-search 一次性設定                     │")
+            print("├──────────────────────────────────────────┤")
+            print("│  瀏覽器視窗已開啟。                        │")
+            print("│  請登入你的 Google 帳號。                  │")
+            print("│  登入完成後會自動偵測並關閉。                │")
+            print(f"│  超時：{timeout_seconds} 秒                              │")
+            print("└──────────────────────────────────────────┘")
 
             import asyncio as _aio
             elapsed = 0
@@ -117,13 +182,14 @@ def setup(timeout_seconds: int = 180) -> bool:
                 cookies = await ctx.cookies("https://www.google.com")
                 if _has_google_session(cookies):
                     result["ok"] = True
-                    print(f"\nSign-in detected after {elapsed}s.")
                     break
-                print(f"  Waiting... ({elapsed}/{timeout_seconds}s)", end="\r")
+                remaining = timeout_seconds - elapsed
+                print(f"  ⏳ 等待登入... 剩餘 {remaining}s", end="\r", flush=True)
 
             if result["ok"]:
-                # Navigate to www.google.com to trigger persistent cookie writes,
-                # then save the full cookie jar (including session-only cookies).
+                print(f"\n✅ 登入成功！（{elapsed} 秒）")
+                print("  正在儲存 session...")
+                # Navigate to www.google.com to trigger persistent cookie writes
                 await page.goto("https://www.google.com", timeout=20_000)
                 await _aio.sleep(2)
                 all_cookies = await ctx.cookies()
@@ -132,14 +198,17 @@ def setup(timeout_seconds: int = 180) -> bool:
             await ctx.close()
 
         if result["ok"]:
+            n = _count_session()
             print(
-                f"\nSetup complete!  {_count_session()} session cookie(s) saved.\n"
-                "Future searches will use your Google session automatically."
+                f"  已儲存 {n} 個 session cookies 到 {_SESSION_FILE}\n"
+                "\n"
+                "✅ 設定完成！未來搜尋冷門路線時會自動使用你的 Google session。\n"
+                "  一般路線不需要 session 也能搜。"
             )
         else:
             print(
-                f"\nSetup timed out after {timeout_seconds}s without detecting sign-in.\n"
-                "Run gf_search.setup() again and complete the Google sign-in."
+                f"\n❌ 超時（{timeout_seconds} 秒），未偵測到登入。\n"
+                "  請再次執行 gf_search.setup() 並完成 Google 登入。"
             )
 
     asyncio.run(_run())

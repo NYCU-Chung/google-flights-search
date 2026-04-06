@@ -30,10 +30,10 @@ One-time Google session setup (for regional routes, run once):
 from .search import search
 from .multi_city import search_multi_city
 from .builder import build_tfs, build_tfs_multi_city, build_tfs_multi_city_partial, CITY_ENTITIES
-from .setup import setup
+from .setup import setup, session_status
 
 __all__ = [
     "search", "search_multi_city",
     "build_tfs", "build_tfs_multi_city", "build_tfs_multi_city_partial", "CITY_ENTITIES",
-    "setup",
+    "setup", "session_status",
 ]
