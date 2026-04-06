@@ -138,7 +138,10 @@ def _parse_batch_response(raw: str) -> list[dict]:
     # batchexecute responses have no such prefix; the regex is a no-op for them.
     _len_m = re.match(r'^(\d+)\n(.*)', stripped, re.DOTALL)
     if _len_m:
-        stripped = _len_m.group(2)
+        chunk_len = int(_len_m.group(1))
+        remaining = _len_m.group(2)
+        if chunk_len <= len(remaining):
+            stripped = remaining
     # Use raw_decode so trailing data / extra streaming frames are tolerated.
     try:
         outer, _ = json.JSONDecoder().raw_decode(stripped)
@@ -354,11 +357,7 @@ def search_multi_city(
     try:
         orig_inner = ast.literal_eval(inner_raw)[1]
     except (ValueError, SyntaxError):
-        # ast.literal_eval fails on rare non-literal JS constructs; eval as fallback.
-        try:
-            orig_inner = eval(inner_raw)[1]  # noqa: S307 — Google's embedded JS structure
-        except Exception:
-            return []
+        return []
     except Exception:
         return []
 
@@ -562,12 +561,23 @@ def search_multi_city(
         # This finds CI+CI+CI+CI, BR+BR+BR+BR etc. with only
         # (n_fsc_airlines × n_legs) extra batchexecute calls instead of
         # the exponential fan-out required by price-ranked combo expansion.
+        _MAX_FSC_CHAINS = 5
         _budget_set_local = {"UO", "IT", "MM", "GK", "TR", "3K", "VZ", "FD", "SL", "HB"}
         _fsc_leg0 = [
             o for o in leg0_opts
             if (o.get("airlines") or ["?"])[0] not in _budget_set_local
         ]
-        for _fsc0 in _fsc_leg0:
+        # Keep only the cheapest option per FSC airline to cap chain count
+        _fsc_seen_al: set[str] = set()
+        _fsc_leg0_dedup: list[dict] = []
+        for _o in sorted(_fsc_leg0, key=lambda x: x["price"]):
+            _al = (_o.get("airlines") or ["?"])[0]
+            if _al not in _fsc_seen_al:
+                _fsc_seen_al.add(_al)
+                _fsc_leg0_dedup.append(_o)
+            if len(_fsc_leg0_dedup) >= _MAX_FSC_CHAINS:
+                break
+        for _fsc0 in _fsc_leg0_dedup:
             _target_al = (_fsc0.get("airlines") or ["?"])[0]
             _fsc_legs = [_fsc0]
             _fsc_tok = _fsc0["token"]

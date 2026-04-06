@@ -11,6 +11,8 @@ from __future__ import annotations
 # ── Protobuf encoding primitives ─────────────────────────────────────────────
 
 def _varint(n: int) -> bytes:
+    if n < 0:
+        raise ValueError("varint does not support negative values")
     buf = []
     while n > 0x7F:
         buf.append((n & 0x7F) | 0x80)
@@ -51,12 +53,20 @@ def _fmt_date(date_list) -> str:
 
 # ── primp HTTP-client factory ─────────────────────────────────────────────────
 
+_FALLBACK_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 def _make_client(timeout: int = 60):
     """
     Create a primp Client with Chrome TLS impersonation.
 
     Tries chrome_146 first (latest supported profile), then falls back to
-    progressively older versions, and finally to the default profile.
+    progressively older versions, and finally to the default profile with
+    a Chrome-like User-Agent header.
     """
     from primp import Client
     for profile in ("chrome_146", "chrome_131", "chrome_130"):
@@ -66,4 +76,7 @@ def _make_client(timeout: int = 60):
                 return c
         except Exception:
             continue
-    return Client(referer=True, cookie_store=True, timeout=timeout)
+    return Client(
+        referer=True, cookie_store=True, timeout=timeout,
+        headers={"User-Agent": _FALLBACK_USER_AGENT},
+    )

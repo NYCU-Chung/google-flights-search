@@ -149,6 +149,11 @@ def setup(timeout_seconds: int = 180) -> bool:
 def _save_cookies(cookies: list[dict]) -> None:
     with open(_SESSION_FILE, "w", encoding="utf-8") as f:
         json.dump(cookies, f)
+    try:
+        import os
+        os.chmod(_SESSION_FILE, 0o600)
+    except OSError:
+        pass  # Windows does not support Unix permissions
 
 
 def _count_session() -> int:

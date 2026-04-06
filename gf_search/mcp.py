@@ -23,15 +23,17 @@ Claude Desktop config (after pip install gf-search):
     }
 """
 
+import asyncio
+
 from mcp.server.fastmcp import FastMCP
-from .search import search
-from .multi_city import search_multi_city
+from .search import search as _search_sync
+from .multi_city import search_multi_city as _search_multi_city_sync
 
 mcp = FastMCP("Google Flights Search")
 
 
 @mcp.tool()
-def search_flights(
+async def search_flights(
     origin: str,
     destination: str,
     departure_date: str,
@@ -55,7 +57,8 @@ def search_flights(
     Returns:
         List of flights, each with airlines, price, stops, and segments detail.
     """
-    return search(
+    return await asyncio.to_thread(
+        _search_sync,
         origin=origin,
         destination=destination,
         departure_date=departure_date,
@@ -67,7 +70,7 @@ def search_flights(
 
 
 @mcp.tool()
-def search_multi_city_flights(
+async def search_multi_city_flights(
     segments: list[dict],
     adults: int = 1,
     travel_class: str = "economy",
@@ -95,7 +98,13 @@ def search_multi_city_flights(
         List of itineraries. Results with "booking_token" are combined tickets
         bookable directly on Google Flights.
     """
-    return search_multi_city(
+    for seg in segments:
+        missing = [k for k in ("from", "to", "date") if k not in seg]
+        if missing:
+            raise ValueError(f"Segment {seg!r} missing required keys: {missing}")
+
+    return await asyncio.to_thread(
+        _search_multi_city_sync,
         segments=segments,
         adults=adults,
         travel_class=travel_class,

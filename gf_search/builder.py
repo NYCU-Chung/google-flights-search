@@ -5,8 +5,32 @@ Builds URL-safe base64-encoded protobuf for the Google Flights search endpoint.
 
 from __future__ import annotations
 import base64 as _b64
+import re as _re
+from datetime import datetime as _datetime
 
 from ._utils import _varint, _field_varint, _field_len
+
+
+def _validate_iata(code: str, name: str = "airport code") -> None:
+    if not _re.match(r'^[A-Z]{2,4}$', code):
+        raise ValueError(f"Invalid {name}: {code!r} (must be 2-4 uppercase letters)")
+
+
+def _validate_date(date_str: str, name: str = "date") -> None:
+    try:
+        _datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        raise ValueError(f"Invalid {name}: {date_str!r} (must be YYYY-MM-DD)")
+
+
+def _validate_adults(adults: int) -> None:
+    if adults < 1:
+        raise ValueError(f"adults must be >= 1, got {adults}")
+
+
+def _validate_seat(seat: int) -> None:
+    if seat not in (1, 2, 3, 4):
+        raise ValueError(f"seat must be 1-4, got {seat}")
 
 # Google Flights city/metro entity IDs for airports that need city-level search.
 # Format: IATA -> entity_id (entity_type=2 = city/metro area)
@@ -122,6 +146,14 @@ def build_tfs(
     These fields cause Google to perform on-demand calculation for low-traffic airports,
     returning data[3] list instead of null.
     """
+    _validate_iata(origin, "origin")
+    _validate_iata(destination, "destination")
+    _validate_date(departure_date, "departure_date")
+    if return_date is not None:
+        _validate_date(return_date, "return_date")
+    _validate_adults(adults)
+    _validate_seat(seat)
+
     info = (
         _field_varint(1, 28)   # query type flag
         + _field_varint(2, 2)  # query type flag
@@ -219,6 +251,13 @@ def build_tfs_multi_city(
     - Generates one field 3 (FlightData) per segment
     - Includes field 16 (all-results flag), consistent with browser-observed traffic
     """
+    _validate_adults(adults)
+    _validate_seat(seat)
+    for seg in segments:
+        _validate_iata(seg["from"].upper(), "segment origin")
+        _validate_iata(seg["to"].upper(), "segment destination")
+        _validate_date(seg["date"], "segment date")
+
     info = (
         _field_varint(1, 28)
         + _field_varint(2, 2)

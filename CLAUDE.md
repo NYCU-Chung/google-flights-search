@@ -21,7 +21,7 @@
 ## 每日情報追蹤 Prompt 範本
 
 ```
-你是機票特價追蹤員。讀取 C:\Users\progr\flight-agent\profile.md 了解使用者偏好後，依序 WebSearch：
+你是機票特價追蹤員。讀取 profile.md 了解使用者偏好後，依序 WebSearch：
 1. "台灣出發 機票特價 2026" 或 "TPE 特價機票"
 2. "Asia Miles 促銷 2026" 或 "亞萬 特惠兌換"
 3. "滙豐旅人 轉點 bonus 2026" 或 "國泰世華小樹點 轉點活動"
@@ -30,10 +30,10 @@
 
 過濾條件：TPE 出發、商務艙以上、與 Asia Miles / 小樹點 / 滙豐旅人相關。
 
-將新發現追加到 C:\Users\progr\flight-agent\profile.md 的「## 好康情報」區塊：
+將新發現追加到 profile.md 的「## 好康情報」區塊：
 格式：### [YYYY-MM-DD 查詢]\n- [來源] 摘要（截止：...）
 
-若有重要活動，同步更新 C:\Users\progr\.claude\projects\C--Users-progr\memory\user_travel_preferences.md。
+若有重要活動，同步更新 ~/.claude/ 下的 user_travel_preferences.md。
 
 完成後輸出：「✅ 今日情報追蹤完成：[找到 N 筆 / 無新情報]」
 ```
@@ -81,8 +81,8 @@
 - 里程空位狀況（有/無，查詢日期）
 
 寫入位置：
-1. `C:\Users\progr\flight-agent\profile.md`（本專案詳細檔）
-2. `C:\Users\progr\.claude\projects\C--Users-progr\memory\user_travel_preferences.md`（全域 memory）
+1. `profile.md`（本專案詳細檔）
+2. `~/.claude/` 下的 `user_travel_preferences.md`（全域 memory）
 
 `profile.md` 可自由新增區塊（如「## 查詢記錄」「## 好康情報」），不必拘泥於初始格式。
 更新全域 memory 後，`MEMORY.md` 的描述行若需要調整也一併更新。

@@ -11,6 +11,16 @@ cookies are injected automatically for additional session-aware content.
 
 from __future__ import annotations
 
+import ast
+
+
+def _price_key(f: dict) -> int:
+    try:
+        return int(f["price"].split()[-1]) if f.get("price") else 10**9
+    except (ValueError, IndexError):
+        return 10**9
+
+
 _SEAT_MAP: dict[str, int] = {
     "economy": 1,
     "premium-economy": 2,
@@ -30,6 +40,7 @@ def fetch(
     seat: str = "economy",
     adults: int = 1,
     max_results: int = 5,
+    currency: str = "TWD",
 ) -> list[dict]:
     """
     Fetch Google Flights results via primp SSR (impersonates Chrome, no browser needed).
@@ -78,13 +89,13 @@ def fetch(
                     _airlines = list(dict.fromkeys(s['flight_no'][:2] for s in _segs))
                     _results.append({
                         'airlines': _airlines,
-                        'price': f'TWD {_fl["p"]}',
+                        'price': f'{currency} {_fl["p"]}',
                         'stops': _fl['s'],
                         'segments': _segs,
                         'source': 'gf_search',
                     })
                 if _results:
-                    _results.sort(key=lambda f: int(f['price'].split()[-1]))
+                    _results.sort(key=_price_key)
                     return _results[:max_results]
     except Exception:
         pass
@@ -151,7 +162,7 @@ def fetch(
         except Exception:
             continue
 
-        for f in parse_js(txt):
+        for f in parse_js(txt, currency=currency):
             f.pop("_token", None)   # internal field; not for callers
             # Deduplicate by (airlines, first departure datetime)
             key = (
@@ -200,12 +211,7 @@ def fetch(
             dummy_outbound = None
 
         # ── Helpers ───────────────────────────────────────────────────────────
-        def _varint(n: int) -> bytes:
-            buf = []
-            while n > 0x7F:
-                buf.append((n & 0x7F) | 0x80); n >>= 7
-            buf.append(n & 0x7F)
-            return bytes(buf)
+        from ._utils import _varint
 
         def _decode_flight_id(token_b64: str) -> str:
             """Return the flight-id string (field 2) from a booking token."""
@@ -286,7 +292,7 @@ def fetch(
 
                 # Collect (token, flight_id) pairs; prefer direct flights.
                 fwd_opts: list[tuple[str, str]] = []
-                for f in parse_js(txt):
+                for f in parse_js(txt, currency=currency):
                     token = f.get("_token", "")
                     if not token:
                         continue
@@ -321,7 +327,7 @@ def fetch(
                         txt2 = ds1_2.text()
                         if "data:" not in txt2:
                             continue
-                        for f in parse_js(txt2):
+                        for f in parse_js(txt2, currency=currency):
                             f.pop("_token", None)
                             if not f["segments"]:
                                 continue
@@ -362,41 +368,46 @@ def fetch(
                         .replace("true", "True")
                         .replace("false", "False")
                     )
-                    orig_inner = eval(inner_raw)[1]  # noqa: S307
-                    legs_in_req = orig_inner[13]
-                    at_m = _re.search(r'"SNlM0e":"([^"]+)"', rev_html)
-                    at_token = at_m.group(1) if at_m else ""
+                    try:
+                        orig_inner = ast.literal_eval(inner_raw)[1]
+                    except (ValueError, SyntaxError):
+                        orig_inner = None
 
-                    # leg 0: dest→origin (outbound of the reversed round-trip)
-                    leg0_opts = _do_batch(
-                        client, orig_inner, legs_in_req, at_token, None, 0
-                    )
+                    if orig_inner is not None:
+                        legs_in_req = orig_inner[13]
+                        at_m = _re.search(r'"SNlM0e":"([^"]+)"', rev_html)
+                        at_token = at_m.group(1) if at_m else ""
 
-                    # leg 1: origin→dest (return = the route we actually want)
-                    for opt in sorted(leg0_opts, key=lambda x: x.get("price") or 0)[:5]:
-                        leg1_opts = _do_batch(
-                            client, orig_inner, legs_in_req, at_token,
-                            opt["token"], 1,
+                        # leg 0: dest→origin (outbound of the reversed round-trip)
+                        leg0_opts = _do_batch(
+                            client, orig_inner, legs_in_req, at_token, None, 0
                         )
-                        for f in leg1_opts:
-                            if not f["segments"]:
-                                continue
-                            if f["segments"][0].get("from", "").upper() != origin.upper():
-                                continue
-                            key = (
-                                tuple(f["airlines"]),
-                                f["segments"][0].get("departure", ""),
+
+                        # leg 1: origin→dest (return = the route we actually want)
+                        for opt in sorted(leg0_opts, key=lambda x: x.get("price") or 0)[:5]:
+                            leg1_opts = _do_batch(
+                                client, orig_inner, legs_in_req, at_token,
+                                opt["token"], 1,
                             )
-                            if key not in seen:
-                                seen.add(key)
-                                price_val = f.get("price")
-                                merged.append({
-                                    "airlines": f["airlines"],
-                                    "price":    f"TWD {price_val}" if price_val else "",
-                                    "stops":    f["stops"],
-                                    "segments": f["segments"],
-                                    "source":   "gf_search",
-                                })
+                            for f in leg1_opts:
+                                if not f["segments"]:
+                                    continue
+                                if f["segments"][0].get("from", "").upper() != origin.upper():
+                                    continue
+                                key = (
+                                    tuple(f["airlines"]),
+                                    f["segments"][0].get("departure", ""),
+                                )
+                                if key not in seen:
+                                    seen.add(key)
+                                    price_val = f.get("price")
+                                    merged.append({
+                                        "airlines": f["airlines"],
+                                        "price":    f"{currency} {price_val}" if price_val else "",
+                                        "stops":    f["stops"],
+                                        "segments": f["segments"],
+                                        "source":   "gf_search",
+                                    })
             except Exception:
                 pass
 
@@ -534,7 +545,7 @@ def fetch(
             for _f in _pw_opts:
                 _f.pop("_token", None)
                 _f["source"] = "gf_search"
-                _f["price"] = f"TWD {_f['price']}" if isinstance(_f.get("price"), int) else _f.get("price", "")
+                _f["price"] = f"{currency} {_f['price']}" if isinstance(_f.get("price"), int) else _f.get("price", "")
                 _key = (
                     tuple(_f["airlines"]),
                     _f["segments"][0].get("departure", "") if _f["segments"] else "",
@@ -560,7 +571,7 @@ def fetch(
                 merged.append(r)
 
     # Sort by price ascending (empty price string sorts last)
-    merged.sort(key=lambda f: int(f["price"].split()[-1]) if f["price"] else 10**9)
+    merged.sort(key=_price_key)
     return merged[:max_results]
 
 

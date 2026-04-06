@@ -55,5 +55,8 @@ Issues = "https://github.com/NYCU-Chung/google-flights-search/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["gf_search"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"gf_search/py.typed" = "gf_search/py.typed"
+
 [tool.hatch.build.targets.wheel.sources]
 "gf_search/schedules.json" = "gf_search/schedules.json"

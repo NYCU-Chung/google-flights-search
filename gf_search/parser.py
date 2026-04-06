@@ -9,7 +9,7 @@ from __future__ import annotations
 from ._utils import _fmt_date, _fmt_time
 
 
-def parse_js(js: str) -> list[dict]:
+def parse_js(js: str, currency: str = "TWD") -> list[dict]:
     """
     Parse the Google Flights `script.ds:1` JS snippet.
 
@@ -108,7 +108,7 @@ def parse_js(js: str) -> list[dict]:
 
                 entry: dict = {
                     "airlines": airlines,
-                    "price":    f"TWD {price_raw}" if price_raw is not None else "",
+                    "price":    f"{currency} {price_raw}" if price_raw is not None else "",
                     "stops":    max(0, len(segments) - 1),
                     "segments": segments,
                     "source":   "gf_search",

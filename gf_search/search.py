@@ -21,6 +21,7 @@ def search(
     adults: int = 1,
     travel_class: str = "economy",  # economy / premium-economy / business / first
     max_results: int = 5,
+    currency: str = "TWD",
 ) -> list[dict]:
     """
     Search Google Flights via SSR (no Playwright, no session required).
@@ -74,4 +75,5 @@ def search(
         seat=seat,
         adults=adults,
         max_results=max_results,
+        currency=currency,
     )
